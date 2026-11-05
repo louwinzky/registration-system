@@ -1,0 +1,208 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────── Users & access ─────────────
+
+enum Role {
+  ADMIN
+  REGISTRAR
+  CASHIER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  enrollmentsCreated Enrollment[] @relation("EnrollmentCreatedBy")
+  paymentsReceived   Payment[]    @relation("PaymentReceivedBy")
+  auditLogs          AuditLog[]
+}
+
+// ───────────── Registrar module ─────────────
+
+model SchoolYear {
+  id        String   @id @default(cuid())
+  name      String   @unique // e.g. "2026-2027"
+  startDate DateTime
+  endDate   DateTime
+  isCurrent Boolean  @default(false)
+
+  enrollments Enrollment[]
+  feeSchedules FeeSchedule[]
+}
+
+model GradeLevel {
+  id    String @id @default(cuid())
+  name  String @unique // e.g. "Grade 7"
+  order Int    @unique
+
+  sections     Section[]
+  enrollments  Enrollment[]
+  feeSchedules FeeSchedule[]
+}
+
+model Section {
+  id           String     @id @default(cuid())
+  name         String
+  gradeLevelId String
+  gradeLevel   GradeLevel @relation(fields: [gradeLevelId], references: [id])
+  capacity     Int        @default(40)
+
+  enrollments Enrollment[]
+
+  @@unique([gradeLevelId, name])
+}
+
+enum Sex {
+  MALE
+  FEMALE
+}
+
+model Student {
+  id            String   @id @default(cuid())
+  studentNo     String   @unique // e.g. 2026-00001
+  lrn           String?  @unique // DepEd Learner Reference Number
+  firstName     String
+  middleName    String?
+  lastName      String
+  suffix        String?
+  sex           Sex
+  birthDate     DateTime
+  birthPlace    String?
+  address       String?
+  guardianName  String
+  guardianPhone String
+  guardianEmail String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enrollments Enrollment[]
+
+  @@index([lastName, firstName])
+}
+
+enum EnrollmentStatus {
+  PENDING   // registered, awaiting payment
+  ENROLLED  // officially enrolled
+  DROPPED
+  CANCELLED
+}
+
+model Enrollment {
+  id           String           @id @default(cuid())
+  studentId    String
+  student      Student          @relation(fields: [studentId], references: [id])
+  schoolYearId String
+  schoolYear   SchoolYear       @relation(fields: [schoolYearId], references: [id])
+  gradeLevelId String
+  gradeLevel   GradeLevel       @relation(fields: [gradeLevelId], references: [id])
+  sectionId    String?
+  section      Section?         @relation(fields: [sectionId], references: [id])
+  status       EnrollmentStatus @default(PENDING)
+  createdById  String
+  createdBy    User             @relation("EnrollmentCreatedBy", fields: [createdById], references: [id])
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  charges  Charge[]
+  payments Payment[]
+
+  @@unique([studentId, schoolYearId])
+}
+
+// ───────────── Cashier module ─────────────
+
+model FeeSchedule {
+  id           String     @id @default(cuid())
+  schoolYearId String
+  schoolYear   SchoolYear @relation(fields: [schoolYearId], references: [id])
+  gradeLevelId String
+  gradeLevel   GradeLevel @relation(fields: [gradeLevelId], references: [id])
+  name         String     // Tuition, Misc, Books, etc.
+  amount       Decimal    @db.Decimal(12, 2)
+
+  @@unique([schoolYearId, gradeLevelId, name])
+}
+
+model Charge {
+  id           String     @id @default(cuid())
+  enrollmentId String
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  description  String
+  amount       Decimal    @db.Decimal(12, 2)
+  createdAt    DateTime   @default(now())
+}
+
+enum PaymentMethod {
+  CASH
+  GCASH
+  MAYA
+}
+
+enum PaymentStatus {
+  PENDING   // online checkout created, awaiting provider confirmation
+  PAID
+  FAILED
+  VOIDED
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  receiptNo      String?       @unique // assigned when PAID
+  enrollmentId   String
+  enrollment     Enrollment    @relation(fields: [enrollmentId], references: [id])
+  amount         Decimal       @db.Decimal(12, 2)
+  method         PaymentMethod
+  status         PaymentStatus @default(PENDING)
+  // online payment details
+  providerRef    String?       @unique // checkout/payment-intent id from aggregator
+  checkoutUrl    String?
+  // cash details
+  amountTendered Decimal?      @db.Decimal(12, 2)
+  receivedById   String?
+  receivedBy     User?         @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
+  paidAt         DateTime?
+  voidReason     String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([enrollmentId])
+  @@index([status])
+}
+
+model ReceiptCounter {
+  year Int @id
+  last Int @default(0)
+}
+
+model StudentCounter {
+  year Int @id
+  last Int @default(0)
+}
+
+// ───────────── Admin ─────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String   // e.g. PAYMENT_VOIDED
+  entity    String
+  entityId  String
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+}

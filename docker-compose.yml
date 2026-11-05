@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: srs
+      POSTGRES_PASSWORD: srs_password
+      POSTGRES_DB: srs
+    volumes:
+      - srs_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U srs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://srs:srs_password@db:5432/srs?schema=public
+    ports:
+      - "3000:3000"
+
+volumes:
+  srs_pgdata:
